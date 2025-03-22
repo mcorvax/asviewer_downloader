@@ -1,0 +1,10 @@
+local:
+  destination: done
+proxy:
+  # http: http://172.16.1.1:8888
+  # https: http://172.16.1.1:8888
+remote:
+  url: http://gato.tularegion.ru
+  loginURL: https://gato.tularegion.ru/auth
+  username: username
+  password: "change_me"

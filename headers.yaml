@@ -1,0 +1,17 @@
+GET: /lksrv/private/imageViewer/show?objectId=111&attributeId=222&serial=3&group=4444&ext=jp2 HTTP/1.1
+Host: gato.tularegion.ru
+User-Agent: Mozilla/5.0 (Windows NT 10.0; Win64; x64; rv:136.0) Gecko/20100101 Firefox/136.0
+Accept: text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8
+Accept-Language: en-US,en;q=0.5
+Accept-Encoding: gzip, deflate, br, zstd
+Referer: https://gato.tularegion.ru/advanceSearch?page=1&size=10&ot=DOCUMENTS
+DNT: 1
+Connection: keep-alive
+Cookie: JSESSIONID=1234567890
+Upgrade-Insecure-Requests: 1
+Sec-Fetch-Dest: document
+Sec-Fetch-Mode: navigate
+Sec-Fetch-Site: same-origin
+Priority: u=0, i
+Pragma: no-cache
+Cache-Control: no-cache
