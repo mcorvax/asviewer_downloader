@@ -23,11 +23,14 @@ class State:
         self.remoteHost = 'https://gato.tularegion.ru'
         self.viewerPath = '/srv/imageViewer/image?url='
         self.baseURL = self.remoteHost + self.viewerPath
-        self.loginURL = self.remoteHost + '/auth'
+        self.authURL = self.remoteHost + '/auth'
+        self.loginURL = self.remoteHost + '/login'
+        self.apiURL = 'https://gato.tularegion.ru/private_api'
         self.remotePath = ''
         self.start = 1
         self.end = None 
         self.token = None
+        self.allowedSpendMoney = False
         self.config = {}
         self.config['local'] = {}
         self.config['local']['directory'] = datetime.now().strftime('%Y-%m-%d_%H:%M:%S')
@@ -50,7 +53,7 @@ class State:
         #     self.config[key] = str(self.config[key])
 
         if 'remote' in self.config and 'loginUrl' in self.config['remote']:
-            self.loginURL = self.config['remote']['loginUrl']
+            self.authURL = self.config['remote']['loginUrl']
 
     def load_headers(self, file_path: str) -> None:
         with open(file_path, 'r') as file:
@@ -76,34 +79,34 @@ class State:
         
     def authenticate(self, loc: str | None) -> bool:
         """Authenticate the user and store the token."""
-        if loc and loc.startswith(state.remoteHost+'/private/subscription'):
-            return activate_subscription()
+        if loc and loc.startswith(self.remoteHost+'/private/subscription'):
+            return self.activate_subscription()
         
-        if loc and not loc.index(state.loginURL):
-            print(f"Got a new redirect: {loc}. Don't know what to do... ") 
+        if loc and not loc.startswith(self.loginURL):
+            print(f"Got a new redirect: {loc}. Don't know what to do...") 
             return False
         
         print('Trying authenticate...')
-        if not ('remote' in state.config
-                and 'username' in state.config['remote'] and state.config['remote']['username'] > ''
-                and 'username' in state.config['remote'] and state.config['remote']['username'] >''):
+        if not ('remote' in self.config
+                and 'username' in self.config['remote'] and self.config['remote']['username'] > ''
+                and 'username' in self.config['remote'] and self.config['remote']['username'] >''):
             return False
-        headers = state.headers
+        headers = self.headers
         headers['Content-Type'] = 'application/json'
-        headers['Referer'] = state.config['remote']['loginURL']
+        headers['Referer'] = self.config['remote']['loginURL']
         headers['Accept'] = 'application/json, text/plain, */*'
         
-        state.session.cookies.set('auth.strategy', 'local')
-        state.session.cookies.set('auth._token.local', 'false')
-        state.session.cookies.set('auth._token_expiration.local', 'false')
-        state.session.cookies.set('auth.redirect', '/private/me')
+        self.session.cookies.set('auth.strategy', 'local')
+        self.session.cookies.set('auth._token.local', 'false')
+        self.session.cookies.set('auth._token_expiration.local', 'false')
+        self.session.cookies.set('auth.redirect', '/private/me')
 
         payload = {
-            'username': state.config['remote']['username'],
-            'password': state.config['remote']['password']
+            'username': self.config['remote']['username'],
+            'password': self.config['remote']['password']
         }
         try:
-            response = state.session.get(state.loginURL, headers=headers, proxies=state.proxies, json=payload)
+            response = self.session.get(self.authURL, headers=headers, proxies=self.proxies, json=payload)
             if response.status_code != 200:
                 print(f"Authentication failed: {response.status_code} - {response.reason}")
                 return False
@@ -111,10 +114,54 @@ class State:
             print(f"Error during authentication: {e}")
             return False
         
-        state.token = response.json()['token']
-        state.session.cookies.set("auth._token.local", f"Bearer {state.token}")
-        state.headers['Authorization'] = f"Bearer {state.token}"
+        self.token = response.json()['token']
+        self.session.cookies.set("auth._token.local", f"Bearer {self.token}")
+        self.headers['Authorization'] = f"Bearer {self.token}"
         print('Authenticated!')
+        return True
+
+    def api_request(self, method: str, payload: list | dict | None) -> dict:
+        try:
+            response = self.session.post(self.apiURL+'/'+method, headers=self.headers, proxies=self.proxies, json=payload)
+            if response.status_code not in [200, 202]:
+                print(f"API request failed: {response.status_code} - {response.reason}")
+                return {}
+        except requests.RequestException as e:
+            print(f"Error during authentication: {e}")
+            return {}
+        return response.json()
+
+    def get_subscriptions(self) -> str | None:
+        list = self.api_request('get-subscr', {'languageId': 1})
+        count = 0
+        try:
+            count = list['value'][0]['count']
+        except:
+            print("Can't get a number of subscriptions")
+        if count == 0:
+            return
+        return list['value'][0]['id']
+
+    def activate_subscription(self) -> bool:
+        if not self.allowedSpendMoney:
+            print('Activation of the purchased subscription is not allowed automatically. Please activate it manually.')
+            time.sleep(3)
+            return False
+        
+        subscription_id = self.get_subscriptions()
+        if not subscription_id:
+            print("Your subscription has expired. To continue, please purchase a new one on the site.")
+            return False
+        
+        #[{"id":3077447665,"count":1}]
+        data = [{'id': subscription_id, 'count': 1}]
+        result = self.api_request('activate-subscr', data)
+        
+        #{"value":"success","success":true,"message":null,"e":null}
+        if not result['success']:
+            print("Subscription activation failed. Please visit the site to check what’s going on.")
+            return False
+        print("Subscription successfully activated!")
         return True
 
 state = State()
@@ -123,11 +170,12 @@ def parse_args() -> None:
     """Parse command-line arguments."""
     argparser = argparse.ArgumentParser(description='I want it all! -- image downloader')
     argparser.add_argument('--url', '-u', help='URL to download images from', required=False)
-    argparser.add_argument('--output', '-o', help='Output directory', required=False)
-    argparser.add_argument('--start', '-s', default = None, type=int, help='the number of the first image to download', required=False)
-    argparser.add_argument('--end', '-e', default=None, type=int, help='the number of the last image to download', required=False)
+    argparser.add_argument('--output', '-o', help='Directory to save downloaded images', required=False)
+    argparser.add_argument('--start', '-s', default = None, type=int, help='Start downloading from this image number', required=False)
+    argparser.add_argument('--end', '-e', default=None, type=int, help='Stop downloading at this image number', required=False)
     argparser.add_argument('--username', '-n', help='username for authentication', required=False)
     argparser.add_argument('--password', '-p', help='password for authentication', required=False)
+    argparser.add_argument('--allowed-spend-money', default='no', choices=['no', 'yes'], help="'yes' to allow activation of a purchased subscription. ⚠️ Attention: if you run the script simultaneously in multiple instances, use this option in only one of them.", required=False)
     override = argparser.parse_args()
     
     if override.output and override.output != '':
@@ -142,6 +190,9 @@ def parse_args() -> None:
         state.start = override.start
     if override.end:
         state.end = override.end
+    if override.allowed_spend_money == 'yes':
+        state.allowedSpendMoney = True
+    return
 
 def init() -> None:
     state.load_config(configFile)
@@ -151,29 +202,32 @@ def init() -> None:
     
 
 def get_images(imageList: list, dst: str, start: int, end: int) -> bool:
-    max = len(imageList)
-    if max == 0:
+    total_images = len(imageList)
+    if total_images == 0:
         print('No images found')
         return False
-    if start > max:
-        print("Start index is greater than the number of images. Exit!")
+    if start > total_images:
+        print("Start index is greater than the total number of images. Exiting!")
         return False
-    if end > max:
-        print("End index is greater than the number of images. Downloading till {max}")
-        end = max
+    if end > total_images:
+        print(f'End index is greater than the total number of images. Downloading up to {max}')
+        end = total_images
 
     if not os.path.exists(dst):
         os.makedirs(dst)
     else:
-        print('Directory already exists. Skip...')
+        print('Directory already exists. Skipping...')
         # return
 
-    print('There are ', max, 'images. Downloading from', start+1, 'to', end)
+    print(f'There are {total_images} images. Downloading from {start + 1} to {end}.')
 
     zeroMaskCount = len(str(len(imageList)))
     for i in range(start, end):
         imageURL = state.baseURL + state.viewerPath + imageList[i]
         request = fetch_file(imageURL)
+        if not request:
+            print(f"Download stopped at image {i}. To resume, run the script with -s {i}.")
+            return False
         
         # Somebody should configure their Spring controller better instead of this: 'image/jpeg;charset=UTF-8'
         fileExtension = mimetypes.guess_extension(request.headers['Content-Type'].split(';')[0]) or '.bin' #type: ignore
@@ -188,40 +242,41 @@ def get_images(imageList: list, dst: str, start: int, end: int) -> bool:
     print()
     return True
 
-def activate_subscription() -> bool:
-    #TODO: if there is prepaid subscriptions ...
-    print('Subscription expired. Please activate a new one mannualy.')
-    return False
 
 
 def fetch_file(url) -> requests.Response | None:
     """Fetch a file from the given URL."""
 
-    #We'll try a few two times: 
-    # An answer with 302 error code can mean: 
-    #    1) we're not authenticated
-    #    2) we're not authorized to get a resource = we need to buy subscription. After payment we'll get 402 when time is expired
-    # Code 402 i possible when we were authenticated and Subscription was active, but then expired
+    # We'll try a few times:
+    # A 302 response code can mean:
+    #   1) We're not authenticated.
+    #   2) We're not authorized to access the resource — we may need to purchase a subscription.
+    #      After payment, a 402 error may appear when the subscription has expired.
+    # A 402 code is possible if we were authenticated and the subscription was active, but then expired.
+    # A 301 code is possible when we request a URL directly from the search results page without modification.
 
-    retry = 3
+    retry = 4
     request = None
     while retry > 0:
         try:
             #If there is a redirect, it means our session is expired. We need to relogin
             request = state.session.get(url, headers=state.headers, proxies=state.proxies, allow_redirects=False)
+            location = request.headers.get('Location') or ''
             if request.status_code == 200:
                 break
+            elif request.status_code == 301 and location.startswith('/lksrv/'):
+                url = state.remoteHost+location #Got a valid redirection to the requested file
             elif request.status_code == 302:
-                if not state.authenticate(request.headers.get('Location')):
+                if not state.authenticate(location):
                     return
             elif request.status_code == 402:
-                if not activate_subscription():
-                    return
+                if state.activate_subscription():
+                    break
             else:
-                print('Error:', request.status_code, request.reason)
+                print(f'Error: {request.status_code} - {request.reason}')
                 return
         except requests.exceptions.RequestException as e:
-            print('Request failed:', e)
+            print(f"Request failed: {e}")
         retry-=1
     return request
     
@@ -241,8 +296,8 @@ def parse_index(htmlData: str) -> list:
 
 def main():
     init()
-    print('Output directory:', state.config['local']['directory'])
-
+    print(f"Saving images to: {state.config['local']['directory']}")
+    
     index = fetch_file(state.remotePath)
     if index is None:
         print('Failed to get index')
@@ -261,8 +316,7 @@ def main():
         try:
             os.replace(state.config['local']['directory'], state.config['local']['destination']+'/'+lastDir)
         except Exception as e:
-            print('Error moving directory:', e)
-            print ('Move it manualy')
+            print(f"Error moving directory: {e}\nPlease move it manually.")
 
     print('Done!')
 
