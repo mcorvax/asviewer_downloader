@@ -226,7 +226,7 @@ def get_images(imageList: list, dst: str, start: int, end: int) -> bool:
         imageURL = state.baseURL + state.viewerPath + imageList[i]
         request = fetch_file(imageURL)
         if not request:
-            print(f"Download stopped at image {i}. To resume, run the script with -s {i}.")
+            print(f"Download stopped at image {i}. To resume, run the script with -s {i+1}.")
             return False
         
         # Somebody should configure their Spring controller better instead of this: 'image/jpeg;charset=UTF-8'
