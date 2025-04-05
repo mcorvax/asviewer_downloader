@@ -38,9 +38,14 @@ class State:
         self.config['remote'] = {}
         self.config['remote']['username'] = None
         self.config['remote']['password'] = None
+        self.config['proxy'] = {}
         self.session = requests.Session()
  
     def init_proxies(self) -> None:
+        if 'proxy' not in self.config:
+            return 
+        if not self.config['proxy']:
+            return
         for key in self.config['proxy']:
             if self.config['proxy'][key] is not None and self.config['proxy'][key] != '':
                 self.proxies[key] = str(self.config['proxy'][key])
